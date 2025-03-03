@@ -1,0 +1,128 @@
+from datetime import datetime
+
+
+class Train:
+    def __init__(self, ma_tau, tuyen_tau, lo_trinh, lich_trinh, ghe_trong):
+        self.ma_tau = ma_tau
+        self.tuyen_tau = tuyen_tau
+        self.ga_xuat_phat, self.ga_den = self._tach_ga(lo_trinh)
+        self.lich_trinh = self._chuan_hoa_thoi_gian(lich_trinh)
+        self.ghe_trong = ghe_trong.split(",")  # Chuyển thành danh sách
+        self.lo_trinh_goc = lo_trinh
+
+    def _tach_ga(self, lo_trinh):
+        """Tách lộ trình thành ga xuất phát và ga đến"""
+        if ' - ' in lo_trinh:
+            return [part.strip() for part in lo_trinh.split(' - ', 1)]
+        return lo_trinh.strip(), lo_trinh.strip()
+
+    def _chuan_hoa_thoi_gian(self, thoi_gian):
+        """Chuẩn hóa định dạng thời gian"""
+        try:
+            return datetime.strptime(thoi_gian, "%Y-%m-%d %H:%M")
+        except ValueError:
+            return None
+
+from datetime import datetime
+
+from Train import Train
+
+
+class TrainManager:
+    def __init__(self, file_path='train.txt'):
+        self.file_path = file_path
+        self.danh_sach_tau = []
+        self._doc_du_lieu()
+
+    def _doc_du_lieu(self):
+        try:
+            with open(self.file_path, 'r', encoding='utf-8') as file:
+                for line_number, dong in enumerate(file, 1):
+                    dong = dong.strip()
+                    if not dong:
+                        continue
+                    parts = dong.split('|')
+                    if len(parts) != 5:
+                        continue
+                    try:
+                        # Xử lý ghế trống thành danh sách
+                        ghe_trong = parts[4].strip()
+                        tau = Train(
+                            ma_tau=parts[0].strip(),
+                            tuyen_tau=parts[1].strip(),
+                            lo_trinh=parts[2].strip(),
+                            lich_trinh=parts[3].strip(),
+                            ghe_trong=ghe_trong
+                        )
+                        # Kiểm tra thời gian hợp lệ
+                        if not tau.lich_trinh:
+                            print(f"Dòng {line_number} có định dạng thời gian không hợp lệ: {parts[3]}")
+                            continue
+
+                        self.danh_sach_tau.append(tau)
+
+                    except (ValueError, IndexError) as e:
+                        print(f"Lỗi dòng {line_number}: {str(e)}")
+
+        except FileNotFoundError:
+            print(f"Không tìm thấy file {self.file_path}")
+            raise
+
+    def lay_danh_sach_tuyen(self):
+        """Lấy danh sách các tuyến tàu duy nhất"""
+        return sorted({tau.tuyen_tau for tau in self.danh_sach_tau})
+
+    def lay_danh_sach_ga(self, loai_ga='di'):
+        """Lấy danh sách ga đi hoặc ga đến"""
+        if loai_ga == 'di':
+            return sorted({tau.ga_xuat_phat for tau in self.danh_sach_tau})
+        return sorted({tau.ga_den for tau in self.danh_sach_tau})
+
+    def tra_cuu_lien_quan(self, tuyen_tau=None, ga_di=None, ga_den=None, ngay_gio=None, top=5):
+        """Tra cứu các kết quả có liên quan và sắp xếp theo ngày gần nhất"""
+        try:
+            # Parse ngày giờ với định dạng phù hợp
+            ngay_gio_obj = datetime.strptime(ngay_gio, "%Y-%m-%d %H:%M") if ngay_gio else None
+        except Exception as e:
+            print(f"Lỗi parse ngày giờ: {str(e)}")
+            ngay_gio_obj = None
+
+        ket_qua = []
+        for tau in self.danh_sach_tau:
+            # Kiểm tra dữ liệu tàu hợp lệ
+            if not tau.lich_trinh or not isinstance(tau.lich_trinh, datetime):
+                print(f"Tàu {tau.ma_tau} có lịch trình không hợp lệ")
+                continue
+
+            # Kiểm tra liên quan tuyến tàu
+            lien_quan_tuyen = True
+            if tuyen_tau:
+                # Tìm tuyến khớp chính xác hoặc cùng nhóm (ví dụ: M1, M2)
+                lien_quan_tuyen = tau.tuyen_tau == tuyen_tau or tau.tuyen_tau.startswith(tuyen_tau[0])
+
+            # Kiểm tra liên quan ga đi/đến
+            lien_quan_ga_di = not ga_di or tau.ga_xuat_phat == ga_di
+            lien_quan_ga_den = not ga_den or tau.ga_den == ga_den
+
+            # Kiểm tra liên quan thời gian (ngày >= ngày tìm kiếm)
+            lien_quan_thoi_gian = True
+            if ngay_gio_obj:
+                lien_quan_thoi_gian = tau.lich_trinh.date() >= ngay_gio_obj.date()
+
+            # Thêm vào kết quả nếu thỏa mãn
+            if lien_quan_tuyen and lien_quan_ga_di and lien_quan_ga_den and lien_quan_thoi_gian:
+                # Tính độ lệch thời gian (không dùng abs để ưu tiên ngày sau)
+                if ngay_gio_obj:
+                    do_lech = (tau.lich_trinh - ngay_gio_obj).total_seconds()
+                    # Ưu tiên ngày gần nhất, kể cả trước hoặc sau
+                    do_lech = abs(do_lech)
+                else:
+                    do_lech = 0  # Không có ngày tìm kiếm, không tính độ lệch
+
+                ket_qua.append((do_lech, tau))
+
+        # Sắp xếp theo độ lệch từ nhỏ đến lớn
+        ket_qua.sort(key=lambda x: x[0])
+
+        # Trả về danh sách tàu (giới hạn top kết quả)
+        return [tau for do_lech, tau in ket_qua[:top]]
